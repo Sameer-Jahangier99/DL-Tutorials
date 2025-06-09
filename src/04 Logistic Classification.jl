@@ -143,3 +143,81 @@ mode.(ŷ)
 
 
 #HW TODO - Evaluate your LogisticClassifier using 10-folds
+
+# Solution: 10-Fold Cross-Validation Evaluation
+println("\n=== 10-Fold Cross-Validation Evaluation ===")
+
+# Create a fresh machine with the best feature set (Lag1 and Lag2)
+X3 = select(X2, [:Lag1, :Lag2])
+classif_cv = machine(LogisticClassifier(), X3, y)
+
+# Set up 10-fold cross-validation
+cv = CV(nfolds=10, shuffle=true, rng=1234)  # Set rng for reproducibility
+
+# Evaluate using cross-validation with compatible metrics
+# Use only metrics that work reliably with MLJ
+cv_results = evaluate!(classif_cv, 
+                      resampling=cv,
+                      measures=[accuracy, log_loss, f1score],
+                      verbosity=1)
+
+# Display results
+println("\n10-Fold Cross-Validation Results:")
+println("================================")
+println("Accuracy: $(r3(cv_results.measurement[1])) ± $(r3(std(cv_results.per_fold[1])))")
+println("Log Loss: $(r3(cv_results.measurement[2])) ± $(r3(std(cv_results.per_fold[2])))")
+println("F1 Score: $(r3(cv_results.measurement[3])) ± $(r3(std(cv_results.per_fold[3])))")
+
+# Calculate additional metrics manually from confusion matrix per fold
+println("\nDetailed metrics per fold:")
+cv_detailed = evaluate!(classif_cv,
+                       resampling=cv, 
+                       measures=[confusion_matrix],
+                       verbosity=0)
+
+# Calculate precision and recall from confusion matrices
+precisions = []
+recalls = []
+for cm in cv_detailed.per_fold[1]
+    # Extract values from confusion matrix
+    tp = cm[2,2]  # True positives (Up predicted as Up)
+    fp = cm[2,1]  # False positives (Down predicted as Up)  
+    fn = cm[1,2]  # False negatives (Up predicted as Down)
+    precision_val = tp / (tp + fp)
+    recall_val = tp / (tp + fn)
+    
+    push!(precisions, precision_val)
+    push!(recalls, recall_val)
+end
+
+println("Precision: $(r3(mean(precisions))) ± $(r3(std(precisions)))")
+println("Recall: $(r3(mean(recalls))) ± $(r3(std(recalls)))")
+
+# Also evaluate the model with all features (except Year and Today) for comparison
+println("\n=== Comparison: All Features vs Selected Features ===")
+
+# Model with all features (X2)
+classif_all = machine(LogisticClassifier(), X2, y)
+cv_results_all = evaluate!(classif_all, 
+                          resampling=cv,
+                          measures=[accuracy, log_loss, f1score],
+                          verbosity=0)
+
+println("\nAll Features (Lag1, Lag2, Lag3, Lag4, Lag5, Volume):")
+println("  Accuracy: $(r3(cv_results_all.measurement[1])) ± $(r3(std(cv_results_all.per_fold[1])))")
+println("  Log Loss: $(r3(cv_results_all.measurement[2])) ± $(r3(std(cv_results_all.per_fold[2])))")
+println("  F1 Score: $(r3(cv_results_all.measurement[3])) ± $(r3(std(cv_results_all.per_fold[3])))")
+
+println("\nSelected Features (Lag1, Lag2 only):")
+println("  Accuracy: $(r3(cv_results.measurement[1])) ± $(r3(std(cv_results.per_fold[1])))")
+println("  Log Loss: $(r3(cv_results.measurement[2])) ± $(r3(std(cv_results.per_fold[2])))")
+println("  F1 Score: $(r3(cv_results.measurement[3])) ± $(r3(std(cv_results.per_fold[3])))")
+
+# Statistical significance test (rough approximation)
+accuracy_diff = cv_results.measurement[1] - cv_results_all.measurement[1]
+println("\nAccuracy difference (Selected - All): $(r3(accuracy_diff))")
+if abs(accuracy_diff) > 0.01
+    println("Notable difference in performance between feature sets")
+else
+    println("Similar performance between feature sets")
+end

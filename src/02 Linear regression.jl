@@ -1,4 +1,3 @@
-
 # ## Simple linear regression
 
 # `MLJ` essentially serves as a unified path to many existing Julia packages each of which provides their own functionalities and models, with their own conventions.
@@ -16,7 +15,7 @@ models(filter)
 models("XGB")
 measures("F1")
 
-mdls = models(matching(X, y))
+# mdls = models(matching(X, y))  # Commented out - X and y not defined yet
 
 # Linear regression
 
@@ -27,7 +26,7 @@ LR = @load LinearRegressor pkg = MLJLinearModels
 # Let's load the _boston_ data set
 
 import RDatasets: dataset
-import DataFrames: describe, select, Not, rename!
+import DataFrames: describe, select, Not, rename!, DataFrame
 data = dataset("MASS", "Boston")
 println(first(data, 3))
 
@@ -120,8 +119,8 @@ rename!(X2, :x1 => :interaction)
 
 mach = machine(model, X2, y)
 fit!(mach)
-ŷ = MLJ.predict(mach, X2)
-round(rsquared(ŷ, y), sigdigits=4)
+ŷ = MLJ.predict(mach, X2)
+round(rsquared(ŷ, y), sigdigits=4)
 
 # We get slightly better results but nothing spectacular.
 #
@@ -130,8 +129,8 @@ round(rsquared(ŷ, y), sigdigits=4)
 X3 = DataFrame(hcat(X.LStat, X.LStat .^ 2), [:LStat, :LStat2])
 mach = machine(model, X3, y)
 fit!(mach)
-ŷ = MLJ.predict(mach, X3)
-round(rsquared(ŷ, y), sigdigits=4)
+ŷ = MLJ.predict(mach, X3)
+round(rsquared(ŷ, y), sigdigits=4)
 
 # fitting y=mx+c to X3 is the same as fitting y=mx2+c to X3.LStat => Polynomial regression
 
@@ -145,3 +144,109 @@ plot!(Xnew.LStat, MLJ.predict(mach, Xnew), linewidth=3, color=:orange)
 
 
 # TODO HW : Find the best model by feature selection; best model means highest R²
+
+# Feature Selection using Forward Selection
+println("\n=== Feature Selection using Forward Selection ===")
+
+# Get all available feature names
+all_features = names(X)
+println("Available features: ", all_features)
+
+# Initialize variables for forward selection
+selected_features = String[]
+remaining_features = copy(all_features)
+best_r2_overall = 0.0
+best_features_overall = String[]
+
+println("\nForward Selection Process:")
+println("Step | Added Feature | Selected Features | R² Score")
+println("-" ^ 60)
+
+step = 0
+while !isempty(remaining_features)
+    global step, best_r2_overall, best_features_overall
+    step += 1
+    best_r2_step = -Inf
+    best_feature_step = ""
+    
+    # Try adding each remaining feature
+    for feature in remaining_features
+        test_features = vcat(selected_features, [feature])
+        X_test = select(X, Symbol.(test_features))
+        
+        # Fit model with current feature combination
+        mach_test = machine(model, X_test, y)
+        fit!(mach_test, verbosity=0)  # verbosity=0 to suppress output
+        ŷ_test = MLJ.predict(mach_test, X_test)
+        r2_test = rsquared(ŷ_test, y)
+        
+        # Check if this is the best feature to add in this step
+        if r2_test > best_r2_step
+            best_r2_step = r2_test
+            best_feature_step = feature
+        end
+    end
+    
+    # Add the best feature if it improves the overall R²
+    if best_r2_step > best_r2_overall
+        push!(selected_features, best_feature_step)
+        filter!(f -> f != best_feature_step, remaining_features)
+        best_r2_overall = best_r2_step
+        best_features_overall = copy(selected_features)
+        
+        println("$(lpad(step, 4)) | $(rpad(best_feature_step, 13)) | $(rpad(join(selected_features, ", "), 17)) | $(round(best_r2_step, digits=6))")
+    else
+        # No improvement, stop the forward selection
+        println("No improvement found. Stopping forward selection.")
+        break
+    end
+end
+
+println("\n=== Best Model Found ===")
+println("Best features: ", best_features_overall)
+println("Best R² score: ", round(best_r2_overall, digits=6))
+println("Number of features: ", length(best_features_overall))
+
+# Fit the final best model
+X_best = select(X, Symbol.(best_features_overall))
+mach_best = machine(model, X_best, y)
+fit!(mach_best)
+
+# Display the coefficients of the best model
+fp_best = fitted_params(mach_best)
+println("\n=== Best Model Coefficients ===")
+for (name, val) in fp_best.coefs
+    println("$(rpad(string(name), 10)): $(round(val, sigdigits=4))")
+end
+println("$(rpad("Intercept", 10)): $(round(fp_best.intercept, sigdigits=4))")
+
+# Compare with the full model
+println("\n=== Comparison with Full Model ===")
+mach_full = machine(model, X, y)
+fit!(mach_full)
+ŷ_full = MLJ.predict(mach_full, X)
+r2_full = rsquared(ŷ_full, y)
+
+println("Full model (all features) R²: $(round(r2_full, digits=6))")
+println("Best model ($(length(best_features_overall)) features) R²: $(round(best_r2_overall, digits=6))")
+println("Improvement: $(round(best_r2_overall - r2_full, digits=6))")
+println("Features reduced: $(length(all_features) - length(best_features_overall)) out of $(length(all_features))")
+
+# Visualize feature importance by showing R² contribution
+println("\n=== Feature Importance (Individual R² when used alone) ===")
+individual_r2 = Dict{String, Float64}()
+for feature in all_features
+    X_single = select(X, Symbol(feature))
+    mach_single = machine(model, X_single, y)
+    fit!(mach_single, verbosity=0)
+    ŷ_single = MLJ.predict(mach_single, X_single)
+    r2_single = rsquared(ŷ_single, y)
+    individual_r2[feature] = r2_single
+end
+
+# Sort features by individual R²
+sorted_features = sort(collect(individual_r2), by=x->x[2], rev=true)
+for (feature, r2) in sorted_features
+    selected_marker = feature in best_features_overall ? " ✓" : ""
+    println("$(rpad(feature, 10)): $(round(r2, digits=6))$selected_marker")
+end

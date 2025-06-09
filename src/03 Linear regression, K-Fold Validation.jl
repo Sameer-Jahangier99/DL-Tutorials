@@ -166,6 +166,118 @@ best_models_mse_std = std(rep.best_history_entry.per_fold[1])^2
 
 #HW TODO - find if MSE reduces further if we take and hyperparamaters tune upto 10 powers of each feature!
 
+### Solution: Polynomial features for ALL numerical features with hyperparameter tuning
+
+# First, let's identify the numerical features (excluding the target MPG and non-numeric Name)
+numerical_features = names(select(X, Not(:Name)))
+println("Numerical features to expand: ", numerical_features)
+
+# Create polynomial features up to degree 10 for each numerical feature
+X_poly = DataFrame()
+feature_names = String[]
+
+for feature in numerical_features
+    feature_data = X[!, feature]
+    for power in 1:10
+        col_name = "$(feature)_p$(power)"
+        X_poly[!, col_name] = feature_data .^ power
+        push!(feature_names, col_name)
+    end
+end
+
+println("Created $(ncol(X_poly)) polynomial features")
+println("First few feature names: ", feature_names[1:min(10, length(feature_names))])
+
+# Create the pipeline for polynomial feature selection
+PolyLinMod = Pipeline(
+    FeatureSelector(features=[Symbol(feature_names[1])]),  # Start with first feature
+    LR()
+)
+
+# Create different feature combinations for hyperparameter tuning
+# We'll try combinations of increasing complexity - using same approach as original code
+max_features_to_try = min(30, length(feature_names))  # Limit to avoid overfitting
+
+# Create cases similar to the original working code pattern
+poly_cases = Vector{Vector{Symbol}}()
+
+# Strategy 1: Sequential addition (exactly like the working original code)
+for i in 1:max_features_to_try
+    push!(poly_cases, [Symbol(feature_names[j]) for j in 1:i])
+end
+
+# Strategy 2: Add strategic degree-based combinations
+# All degree-1 features (first power of each original feature)
+degree_1_features = Vector{Symbol}()
+for feat in numerical_features
+    push!(degree_1_features, Symbol("$(feat)_p1"))
+end
+push!(poly_cases, degree_1_features)
+
+# All degree-1 and degree-2 features
+degree_1_2_features = Vector{Symbol}()
+for feat in numerical_features
+    for p in 1:2
+        push!(degree_1_2_features, Symbol("$(feat)_p$(p)"))
+    end
+end
+push!(poly_cases, degree_1_2_features)
+
+println("Total feature combinations to try: ", length(poly_cases))
+
+# Set up the hyperparameter range (exactly like the working original)
+r_poly = range(PolyLinMod, :(feature_selector.features), values=poly_cases)
+
+# Create the tuned model with cross-validation
+tm_poly = TunedModel(
+    model=PolyLinMod, 
+    ranges=r_poly, 
+    resampling=CV(nfolds=10), 
+    measure=rms,
+    acceleration=CPUThreads()  # Use parallel processing if available
+)
+
+# Fit the tuned model
+println("Starting hyperparameter tuning for polynomial features...")
+mtm_poly = machine(tm_poly, X_poly, y)
+fit!(mtm_poly)
+
+# Get results
+rep_poly = report(mtm_poly)
+best_poly_mse_mean = mean(rep_poly.best_history_entry.per_fold[1])^2
+best_poly_mse_std = std(rep_poly.best_history_entry.per_fold[1])^2
+
+println("\n=== RESULTS COMPARISON ===")
+println("Original best model (all features, degree 1):")
+println("  MSE Mean: $(best_models_mse_mean)")
+println("  MSE Std:  $(best_models_mse_std)")
+println("\nPolynomial features model:")
+println("  MSE Mean: $(best_poly_mse_mean)")
+println("  MSE Std:  $(best_poly_mse_std)")
+println("  Best features: $(rep_poly.best_model.feature_selector.features)")
+println("  Number of features in best model: $(length(rep_poly.best_model.feature_selector.features))")
+
+# Check if polynomial features reduce MSE
+mse_improvement = best_models_mse_mean - best_poly_mse_mean
+println("\nMSE Improvement: $(mse_improvement)")
+if mse_improvement > 0
+    println("✅ YES! Polynomial features reduce MSE by $(round(mse_improvement, digits=4))")
+    percent_improvement = (mse_improvement / best_models_mse_mean) * 100
+    println("   That's a $(round(percent_improvement, digits=2))% improvement!")
+else
+    println("❌ No significant improvement with polynomial features")
+end
+
+# Plot comparison of MSE across different feature combinations
+using Plots
+mse_history = [mean(entry.per_fold[1])^2 for entry in rep_poly.history]
+plot(1:length(mse_history), mse_history, 
+     title="MSE vs Feature Combination", 
+     xlabel="Feature Combination Index", 
+     ylabel="MSE (Cross-Validation)",
+     linewidth=2,
+     size=(800, 400))
+hline!([best_models_mse_mean], label="Original Best MSE", linestyle=:dash, color=:red, linewidth=2)
+plot!(legend=:topright)
+
 # Question - How can we use linear regression for classification?
-
-
